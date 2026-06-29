@@ -1,4 +1,4 @@
-const { pool } = require('../database/db');
+const { pool } = require('./db');
 
 class ThreatEngine {
   constructor() {
@@ -28,9 +28,10 @@ class ThreatEngine {
     const tier2Id = process.env.TIER_2_ROLE_ID;
     const tier3Id = process.env.TIER_3_ROLE_ID;
 
-    if (member.roles.cache.has(tier1Id)) return 1;
-    if (member.roles.cache.has(tier2Id)) return 2;
+    // Always take the highest tier the user has
     if (member.roles.cache.has(tier3Id)) return 3;
+    if (member.roles.cache.has(tier2Id)) return 2;
+    if (member.roles.cache.has(tier1Id)) return 1;
     return 2; // Default to tier 2
   }
 
