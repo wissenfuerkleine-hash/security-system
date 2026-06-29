@@ -19,29 +19,58 @@ async function restore(guild, incidentId) {
   }
 
   const row = snapshot.rows[0];
-  // Falls die Daten als String in der DB liegen, parsen wir sie
   const channelsData = typeof row.channels === 'string' ? JSON.parse(row.channels) : row.channels;
   const rolesData = typeof row.roles === 'string' ? JSON.parse(row.roles) : row.roles;
 
   console.log(`Starte Wiederherstellung für Incident: ${row.incident_id}...`);
 
-  // Kanäle wiederherstellen
+  // 1. Kanäle wiederherstellen
   if (channelsData) {
     for (const channelData of channelsData) {
       const channel = await guild.channels.fetch(channelData.id).catch(() => null);
-      if (channel && channelData.permissionOverwrites) {
-        for (const overwrite of channelData.permissionOverwrites) {
-          await channel.permissionOverwrites.create(overwrite.id, {
-            // Wandelt die gespeicherten Strings wieder in korrekte Bitfields um
-            allow: new PermissionsBitField(BigInt(overwrite.allow)),
-            deny: new PermissionsBitField(BigInt(overwrite.deny))
-          }).catch((err) => console.error(`Fehler bei Restore für Kanal ${channel.name}:`, err.message));
+      if (!channel) continue;
+
+      try {
+        // SCHRITT A: Absoluter Reset für DIESEN Kanal
+        // Wir löschen JEDE aktuell gesetzte Berechtigung im Kanal, damit nichts vom Lockdown übrig bleibt
+        const currentOverwrites = channel.permissionOverwrites.cache.keys();
+        for (const id of currentOverwrites) {
+          await channel.permissionOverwrites.delete(id).catch(() => {});
         }
+
+        // SCHRITT B: Setze die exakten Snapshot-Berechtigungen einzeln neu
+        if (channelData.permissionOverwrites && channelData.permissionOverwrites.length > 0) {
+          for (const overwrite of channelData.permissionOverwrites) {
+            
+            // Wichtig: Wir prüfen vorab, ob die Rolle oder der User überhaupt auf dem Server existiert!
+            const exists = (await guild.roles.fetch(overwrite.id).catch(() => null)) || 
+                           (await guild.members.fetch(overwrite.id).catch(() => null)) ||
+                           overwrite.id === guild.id; // guild.id ist die @everyone Rolle
+
+            if (!exists) {
+              console.warn(`[Skip] Rolle/User ${overwrite.id} existiert nicht mehr. Wird übersprungen.`);
+              continue;
+            }
+
+            // Wenn sie existiert, wird sie jetzt fest und einzeln in den Channel geschrieben
+            await channel.permissionOverwrites.create(overwrite.id, {
+              allow: new PermissionsBitField(BigInt(overwrite.allow)),
+              deny: new PermissionsBitField(BigInt(overwrite.deny))
+            }).catch((err) => console.error(`Fehler bei Permission-Set für Kanal ${channel.name}:`, err.message));
+          }
+        } else {
+          // Falls im Snapshot KEINE Rechte für den Channel waren (permissionOverwrites leer),
+          // sorgt Schritt A bereits dafür, dass er wieder sauber auf Standard (Kategorie-Erbe) steht.
+          console.log(`Kanal ${channel.name} hatte keine extra Rechte, wurde auf Standard zurückgesetzt.`);
+        }
+
+      } catch (err) {
+        console.error(`Kritischer Fehler bei Kanal-Verarbeitung ${channel.name}:`, err.message);
       }
     }
   }
 
-  // Rollen wiederherstellen
+  // 2. Rollen wiederherstellen
   if (rolesData) {
     for (const roleData of rolesData) {
       const role = await guild.roles.fetch(roleData.id).catch(() => null);
