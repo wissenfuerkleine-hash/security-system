@@ -1,8 +1,10 @@
 const { pool } = require('./db');
 const { PermissionsBitField } = require('discord.js');
 
+// Kleine Hilfsfunktion für die Pause
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function restore(guild, incidentId) {
-  // Holt den neuesten Snapshot, falls keine ID übergeben wurde
   let query = 'SELECT * FROM snapshots WHERE incident_id = $1';
   let params = [incidentId];
 
@@ -32,35 +34,33 @@ async function restore(guild, incidentId) {
 
       try {
         // SCHRITT A: Absoluter Reset für DIESEN Kanal
-        // Wir löschen JEDE aktuell gesetzte Berechtigung im Kanal, damit nichts vom Lockdown übrig bleibt
         const currentOverwrites = channel.permissionOverwrites.cache.keys();
         for (const id of currentOverwrites) {
           await channel.permissionOverwrites.delete(id).catch(() => {});
+          await delay(100); // 100ms Pause, um Discord Zeit zu geben
         }
 
-        // SCHRITT B: Setze die exakten Snapshot-Berechtigungen einzeln neu
+        // SCHRITT B: Setze die exakten Snapshot-Berechtigungen
         if (channelData.permissionOverwrites && channelData.permissionOverwrites.length > 0) {
           for (const overwrite of channelData.permissionOverwrites) {
             
-            // Wichtig: Wir prüfen vorab, ob die Rolle oder der User überhaupt auf dem Server existiert!
             const exists = (await guild.roles.fetch(overwrite.id).catch(() => null)) || 
                            (await guild.members.fetch(overwrite.id).catch(() => null)) ||
-                           overwrite.id === guild.id; // guild.id ist die @everyone Rolle
+                           overwrite.id === guild.id;
 
             if (!exists) {
-              console.warn(`[Skip] Rolle/User ${overwrite.id} existiert nicht mehr. Wird übersprungen.`);
               continue;
             }
 
-            // Wenn sie existiert, wird sie jetzt fest und einzeln in den Channel geschrieben
             await channel.permissionOverwrites.create(overwrite.id, {
               allow: new PermissionsBitField(BigInt(overwrite.allow)),
               deny: new PermissionsBitField(BigInt(overwrite.deny))
             }).catch((err) => console.error(`Fehler bei Permission-Set für Kanal ${channel.name}:`, err.message));
+            
+            await delay(100); // 100ms Pause nach jedem gesetzten Recht
           }
+          console.log(`Kanal ${channel.name} erfolgreich 1zu1 wiederhergestellt.`);
         } else {
-          // Falls im Snapshot KEINE Rechte für den Channel waren (permissionOverwrites leer),
-          // sorgt Schritt A bereits dafür, dass er wieder sauber auf Standard (Kategorie-Erbe) steht.
           console.log(`Kanal ${channel.name} hatte keine extra Rechte, wurde auf Standard zurückgesetzt.`);
         }
 
@@ -77,6 +77,7 @@ async function restore(guild, incidentId) {
       if (role && role.id !== guild.id) {
         await role.setPermissions(new PermissionsBitField(BigInt(roleData.permissions))).catch(() => {});
         await role.setPosition(roleData.position).catch(() => {});
+        await delay(100); // Auch hier kurz warten
       }
     }
   }
@@ -84,7 +85,6 @@ async function restore(guild, incidentId) {
   // Setzt den Incident in der DB auf RESOLVED
   await pool.query('UPDATE incidents SET status = \'RESOLVED\' WHERE id = $1', [row.incident_id]).catch(() => {});
 
-  // Versucht das Panel zu schließen, falls die Datei existiert
   try {
     const incidentPanel = require('./incidentPanel');
     if (incidentPanel && typeof incidentPanel.close === 'function') {
