@@ -19,30 +19,40 @@ class LockdownSystem {
       return null;
     }
 
-    // 1. Snapshot erstellen
-    await snapshotManager.createSnapshot(guild, incidentId);
-
-    this.activeLockdown = { incidentId, level, reason, initiator };
-
-    // 2. Kanäle sperren
-    await this.applyLockdownLevel(guild, level);
-
-    // 3. Datenbank-Eintrag erstellen
-    await pool.query(
-      `INSERT INTO incidents (id, level, reason, initiator, status, created_at)
-       VALUES ($1, $2, $3, $4, 'ACTIVE', NOW())`,
-      [incidentId, level, reason, initiator]
-    );
-
-    // 4. Incident Panel erstellen
     try {
-      const incidentPanel = require('./incidentPanel');
-      await incidentPanel.createPanel(guild, incidentId, level, reason, initiator);
-    } catch (panelError) {
-      console.error('Fehler beim Erstellen des Incident-Panels:', panelError.message);
-    }
+      // SCHRITT 1: SOFORT in die Datenbank eintragen, damit der Incident existiert!
+      await pool.query(
+        `INSERT INTO incidents (id, level, reason, initiator, status, created_at)
+         VALUES ($1, $2, $3, $4, 'ACTIVE', NOW())`,
+        [incidentId, level, reason, initiator]
+      ).catch(err => console.error('Datenbank-Fehler beim Incident-Insert:', err.message));
 
-    return incidentId;
+      this.activeLockdown = { incidentId, level, reason, initiator };
+
+      // SCHRITT 2: Snapshot erstellen (Fehler abfangen, falls eine Rolle zickt)
+      console.log(`Erstelle Snapshot für Incident ${incidentId}...`);
+      await snapshotManager.createSnapshot(guild, incidentId).catch(err => {
+        console.error('Fehler beim Erstellen des Snapshots (Lockdown läuft trotzdem weiter):', err.message);
+      });
+
+      // SCHRITT 3: Kanäle sperren
+      console.log(`Sperre Kanäle für Level ${level}...`);
+      await this.applyLockdownLevel(guild, level);
+
+      // SCHRITT 4: Incident Panel erstellen
+      try {
+        const incidentPanel = require('./incidentPanel');
+        await incidentPanel.createPanel(guild, incidentId, level, reason, initiator);
+      } catch (panelError) {
+        console.error('Fehler beim Erstellen des Incident-Panels:', panelError.message);
+      }
+
+      return incidentId;
+
+    } catch (criticalError) {
+      console.error('Kritischer Fehler im Lockdown-Prozess:', criticalError.message);
+      return null;
+    }
   }
 
   async applyLockdownLevel(guild, level) {
@@ -95,7 +105,6 @@ class LockdownSystem {
     return this.activeLockdown;
   }
 
-  // HIER KORRIGIERT: Das "async" wurde hinzugefügt!
   async checkUnlockSignal() {
     if (process.env.UNLOCK_SERVER === 'true') {
       console.log('Unlock signal detected. Initiating restore process...');
@@ -107,7 +116,12 @@ class LockdownSystem {
       
       try {
         const { restore } = require('./restore');
-        await restore(guild, null);
+        // Wir übergeben der restore-Funktion die aktive Incident-ID, falls vorhanden
+        const currentId = this.activeLockdown ? this.activeLockdown.incidentId : null;
+        await restore(guild, currentId);
+        
+        // Nach erfolgreichem Restore setzen wir den lokalen Status zurück
+        this.activeLockdown = null;
       } catch (restoreError) {
         console.error('Fehler während des automatischen Restores:', restoreError.message);
       }
