@@ -136,6 +136,8 @@ class SecurityBot {
         await this.handleLockdownCommand(interaction);
       } else if (commandName === 'status') {
         await this.handleStatusCommand(interaction);
+      } else if (commandName === 'score') {
+        await this.handleScoreCommand(interaction);
       }
     });
   }
@@ -160,7 +162,10 @@ class SecurityBot {
             .setRequired(false)),
       new SlashCommandBuilder()
         .setName('status')
-        .setDescription('Check current lockdown status')
+        .setDescription('Check current lockdown status'),
+      new SlashCommandBuilder()
+        .setName('score')
+        .setDescription('Check your current threat score')
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -202,15 +207,52 @@ class SecurityBot {
 
   async handleStatusCommand(interaction) {
     const status = this.lockdown.getLockdownStatus();
-    
+
     if (status) {
-      await interaction.reply({ 
-        content: `🔒 **LOCKDOWN ACTIVE**\nLevel: ${status.level}\nReason: ${status.reason}\nInitiator: ${status.initiator}\n\nTo unlock: Set UNLOCK_SERVER=true in Railway Console`, 
-        ephemeral: true 
+      await interaction.reply({
+        content: `🔒 **LOCKDOWN ACTIVE**\nLevel: ${status.level}\nReason: ${status.reason}\nInitiator: ${status.initiator}\n\nTo unlock: Set UNLOCK_SERVER=true in Railway Console`,
+        ephemeral: true
       });
     } else {
       await interaction.reply({ content: '✅ No active lockdown', ephemeral: true });
     }
+  }
+
+  async handleScoreCommand(interaction) {
+    const { pool } = require('./db');
+    const userId = interaction.user.id;
+    const guildId = interaction.guild.id;
+
+    const result = await pool.query(
+      'SELECT score, role_tier, last_updated FROM threat_scores WHERE user_id = $1 AND guild_id = $2',
+      [userId, guildId]
+    );
+
+    if (result.rows.length === 0) {
+      await interaction.reply({ content: '📊 **Threat Score: 0**\nStatus: NORMAL\nTier: 2 (Default)', ephemeral: true });
+      return;
+    }
+
+    const { score, role_tier, last_updated } = result.rows[0];
+    const threshold = threatEngine.getThreshold(score);
+
+    const tierNames = {
+      1: 'TIER 1 (Bürger)',
+      2: 'TIER 2 (Mittel)',
+      3: 'TIER 3 (Vertraut)'
+    };
+
+    const thresholdEmojis = {
+      'NORMAL': '✅',
+      'FAIL_ALERT': '⚠️',
+      'WARNING': '🟡',
+      'LOCKDOWN': '🔴'
+    };
+
+    await interaction.reply({
+      content: `📊 **Threat Score: ${score}**\nStatus: ${thresholdEmojis[threshold]} ${threshold}\nTier: ${tierNames[role_tier]}\nLast Updated: ${new Date(last_updated).toLocaleString()}`,
+      ephemeral: true
+    });
   }
 
   startUnlockChecker() {
