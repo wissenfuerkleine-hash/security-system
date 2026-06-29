@@ -1,0 +1,18 @@
+{
+  "name": "discord-security-final",
+  "version": "1.0.0",
+  "description": "Discord Security System with AutoMod, Lockdown, and Railway Console Unlock",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "register-commands": "node register-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
