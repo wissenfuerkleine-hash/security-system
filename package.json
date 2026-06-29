@@ -1,5 +1,5 @@
 {
-  "name": "discord-security-final",
+  "name": "discord-security-flat",
   "version": "1.0.0",
   "description": "Discord Security System with AutoMod, Lockdown, and Railway Console Unlock",
   "main": "index.js",

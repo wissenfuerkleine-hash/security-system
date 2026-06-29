@@ -1,4 +1,4 @@
-const SecurityBot = require('./bot/bot');
+const SecurityBot = require('./bot');
 require('dotenv').config();
 
 const bot = new SecurityBot();
