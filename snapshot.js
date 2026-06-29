@@ -10,17 +10,22 @@ class SnapshotManager {
     };
 
     guild.channels.cache.forEach(channel => {
-      snapshot.channels.push({
-        id: channel.id,
-        name: channel.name,
-        type: channel.type,
-        parentId: channel.parentId,
-        permissionOverwrites: channel.permissionOverwrites.cache.map(po => ({
-          id: po.id,
-          allow: po.allow.bitfield,
-          deny : po.deny.bitfield
-        }))
-      });
+      // Sicherstellen, dass der Kanal permissionOverwrites besitzt
+      if (channel.permissionOverwrites) {
+        snapshot.channels.push({
+          id: channel.id,
+          name: channel.name,
+          type: channel.type,
+          parentId: channel.parentId,
+          // HIER KORRIGIERT: .cache entfernt, da permissionOverwrites direkt gemappt werden kann
+          permissionOverwrites: channel.permissionOverwrites.map(po => ({
+            id: po.id,
+            // .toString() hinzugefügt, da Discord v14 BigInt nutzt (wichtig für die DB!)
+            allow: po.allow.bitfield.toString(),
+            deny : po.deny.bitfield.toString()
+          }))
+        });
+      }
     });
 
     guild.roles.cache.forEach(role => {
@@ -30,22 +35,27 @@ class SnapshotManager {
           name: role.name,
           color: role.color,
           hoist: role.hoist,
-          permissions: role.permissions.bitfield,
+          // Auch hier .toString() für das BigInt Bitfield nutzen
+          permissions: role.permissions.bitfield.toString(),
           position: role.position
         });
       }
     });
 
-    const invites = await guild.invites.fetch();
-    invites.forEach(invite => {
-      snapshot.invites.push({
-        code: invite.code,
-        channelId: invite.channelId,
-        inviterId: invite.inviterId,
-        maxUses: invite.maxUses,
-        temporary: invite.temporary
+    try {
+      const invites = await guild.invites.fetch();
+      invites.forEach(invite => {
+        snapshot.invites.push({
+          code: invite.code,
+          channelId: invite.channelId,
+          inviterId: invite.inviterId,
+          maxUses: invite.maxUses,
+          temporary: invite.temporary
+        });
       });
-    });
+    } catch (err) {
+      console.error("Fehler beim Abrufen der Einladungen für Snapshot:", err.message);
+    }
 
     await pool.query(
       `INSERT INTO snapshots (incident_id, channels, roles, permissions, invites)
