@@ -95,12 +95,20 @@ class LockdownSystem {
 
     await permissions.freezePermissions(guild);
   }
-
-  async unlock() {
-    if (!this.activeLockdown) return false;
-
-    const guild = await this.client.guilds.fetch(process.env.GUILD_ID);
-    const { restore } = require('./restore');
+async checkUnlockSignal() {
+    if (process.env.UNLOCK_SERVER === 'true') {
+      console.log('Unlock signal detected. Initiating restore process...');
+      const guild = this.client.guilds.cache.get(process.env.GUILD_ID);
+      if (!guild) {
+        console.error('Guild nicht gefunden für Restore.');
+        return;
+      }
+      
+      const { restore } = require('./restore');
+      // Führt den Restore mit dem letzten Eintrag aus der DB aus
+      await restore(guild, null);
+    }
+  }
     
     await restore(guild, this.activeLockdown.id);
     await incidentPanel.close(this.activeLockdown.id);
