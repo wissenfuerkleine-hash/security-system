@@ -10,17 +10,16 @@ class SnapshotManager {
     };
 
     guild.channels.cache.forEach(channel => {
-      // Sicherstellen, dass der Kanal permissionOverwrites besitzt
-      if (channel.permissionOverwrites) {
+      // Sicherstellen, dass der Kanal existiert und permissionOverwrites einen Cache hat
+      if (channel && channel.permissionOverwrites && channel.permissionOverwrites.cache) {
         snapshot.channels.push({
           id: channel.id,
-          name: channel.name,
+          name: channel.name || 'unknown',
           type: channel.type,
           parentId: channel.parentId,
-          // HIER KORRIGIERT: .cache entfernt, da permissionOverwrites direkt gemappt werden kann
-          permissionOverwrites: channel.permissionOverwrites.map(po => ({
+          // Hier extra abgesichert über den Cache
+          permissionOverwrites: channel.permissionOverwrites.cache.map(po => ({
             id: po.id,
-            // .toString() hinzugefügt, da Discord v14 BigInt nutzt (wichtig für die DB!)
             allow: po.allow.bitfield.toString(),
             deny : po.deny.bitfield.toString()
           }))
@@ -29,13 +28,12 @@ class SnapshotManager {
     });
 
     guild.roles.cache.forEach(role => {
-      if (role.id !== role.guild.id) {
+      if (role && role.id !== role.guild.id) {
         snapshot.roles.push({
           id: role.id,
           name: role.name,
           color: role.color,
           hoist: role.hoist,
-          // Auch hier .toString() für das BigInt Bitfield nutzen
           permissions: role.permissions.bitfield.toString(),
           position: role.position
         });
