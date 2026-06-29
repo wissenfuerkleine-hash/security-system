@@ -185,74 +185,90 @@ class SecurityBot {
   }
 
   async handleLockdownCommand(interaction) {
-    const level = interaction.options.getInteger('level');
-    const reason = interaction.options.getString('reason') || 'Manual lockdown';
+    // 1. Sofort Discord signalisieren, dass der Bot arbeitet (ephemeral: true hält die Antwort privat)
+    await interaction.deferReply({ ephemeral: true });
 
-    // Check if user has security role
+    // Rechteprüfung nach dem Defer, um Zeitüberschreitungen zu verhindern
     if (!interaction.member.roles.cache.has(process.env.SECURITY_ROLE_ID) && 
         interaction.user.id !== process.env.OWNER_ID) {
-      await interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
+      await interaction.editReply({ content: 'You do not have permission to use this command.' });
       return;
     }
 
-    const incidentId = await this.lockdown.initiateLockdown(level, reason, interaction.user.tag);
-    
-    if (incidentId) {
-      await interaction.reply({ content: `🔒 Lockdown Level ${level} initiated! Incident ID: ${incidentId}`, ephemeral: false });
-      await this.logger.logLockdown(level, reason, interaction.user.tag);
-    } else {
-      await interaction.reply({ content: 'Lockdown already active!', ephemeral: true });
+    const level = interaction.options.getInteger('level');
+    const reason = interaction.options.getString('reason') || 'Manual lockdown';
+
+    try {
+      const incidentId = await this.lockdown.initiateLockdown(level, reason, interaction.user.tag);
+      
+      if (incidentId) {
+        // 2. Antwort editieren statt neu zu senden
+        await interaction.editReply({ content: `🔒 Lockdown Level ${level} initiated! Incident ID: ${incidentId}` });
+        await this.logger.logLockdown(level, reason, interaction.user.tag);
+      } else {
+        await interaction.editReply({ content: 'Lockdown already active!' });
+      }
+    } catch (error) {
+      console.error(error);
+      await interaction.editReply({ content: '❌ An error occurred while executing the lockdown.' });
     }
   }
 
   async handleStatusCommand(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     const status = this.lockdown.getLockdownStatus();
 
     if (status) {
-      await interaction.reply({
-        content: `🔒 **LOCKDOWN ACTIVE**\nLevel: ${status.level}\nReason: ${status.reason}\nInitiator: ${status.initiator}\n\nTo unlock: Set UNLOCK_SERVER=true in Railway Console`,
-        ephemeral: true
+      await interaction.editReply({
+        content: `🔒 **LOCKDOWN ACTIVE**\nLevel: ${status.level}\nReason: ${status.reason}\nInitiator: ${status.initiator}\n\nTo unlock: Set UNLOCK_SERVER=true in Railway Console`
       });
     } else {
-      await interaction.reply({ content: '✅ No active lockdown', ephemeral: true });
+      await interaction.editReply({ content: '✅ No active lockdown' });
     }
   }
 
   async handleScoreCommand(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     const { pool } = require('./db');
     const userId = interaction.user.id;
     const guildId = interaction.guild.id;
 
-    const result = await pool.query(
-      'SELECT score, role_tier, last_updated FROM threat_scores WHERE user_id = $1 AND guild_id = $2',
-      [userId, guildId]
-    );
+    try {
+      const result = await pool.query(
+        'SELECT score, role_tier, last_updated FROM threat_scores WHERE user_id = $1 AND guild_id = $2',
+        [userId, guildId]
+      );
 
-    if (result.rows.length === 0) {
-      await interaction.reply({ content: '📊 **Threat Score: 0**\nStatus: NORMAL\nTier: 2 (Default)', ephemeral: true });
-      return;
+      if (result.rows.length === 0) {
+        await interaction.editReply({ content: '📊 **Threat Score: 0**\nStatus: NORMAL\nTier: 2 (Default)' });
+        return;
+      }
+
+      const { score, role_tier, last_updated } = result.rows[0];
+      const threshold = threatEngine.getThreshold(score);
+
+      const tierNames = {
+        1: 'TIER 1 (Bürger)',
+        2: 'TIER 2 (Mittel)',
+        3: 'TIER 3 (Vertraut)'
+      };
+
+      const thresholdEmojis = {
+        'NORMAL': '✅',
+        'FAIL_ALERT': '⚠️',
+        'WARNING': '🟡',
+        'LOCKDOWN': '🔴'
+      };
+
+      await interaction.editReply({
+        content: `📊 **Threat Score: ${score}**\nStatus: ${thresholdEmojis[threshold]} ${threshold}\nTier: ${tierNames[role_tier]}\nLast Updated: ${new Date(last_updated).toLocaleString()}`
+      });
+    } catch (error) {
+      console.error(error);
+      await interaction.editReply({ content: '❌ Error fetching threat score.' });
     }
-
-    const { score, role_tier, last_updated } = result.rows[0];
-    const threshold = threatEngine.getThreshold(score);
-
-    const tierNames = {
-      1: 'TIER 1 (Bürger)',
-      2: 'TIER 2 (Mittel)',
-      3: 'TIER 3 (Vertraut)'
-    };
-
-    const thresholdEmojis = {
-      'NORMAL': '✅',
-      'FAIL_ALERT': '⚠️',
-      'WARNING': '🟡',
-      'LOCKDOWN': '🔴'
-    };
-
-    await interaction.reply({
-      content: `📊 **Threat Score: ${score}**\nStatus: ${thresholdEmojis[threshold]} ${threshold}\nTier: ${tierNames[role_tier]}\nLast Updated: ${new Date(last_updated).toLocaleString()}`,
-      ephemeral: true
-    });
   }
 
   startUnlockChecker() {
