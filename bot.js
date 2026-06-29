@@ -22,6 +22,7 @@ class SecurityBot {
     this.automod = null;
     this.lockdown = null;
     this.logger = null;
+    this.isRestoring = false; // <-- HIER: Die neue Sperre initialisieren
 
     this.setupEventHandlers();
     this.setupSlashCommands();
@@ -185,10 +186,8 @@ class SecurityBot {
   }
 
   async handleLockdownCommand(interaction) {
-    // 1. Sofort Discord signalisieren, dass der Bot arbeitet (ephemeral: true hält die Antwort privat)
     await interaction.deferReply({ ephemeral: true });
 
-    // Rechteprüfung nach dem Defer, um Zeitüberschreitungen zu verhindern
     if (!interaction.member.roles.cache.has(process.env.SECURITY_ROLE_ID) && 
         interaction.user.id !== process.env.OWNER_ID) {
       await interaction.editReply({ content: 'You do not have permission to use this command.' });
@@ -202,7 +201,6 @@ class SecurityBot {
       const incidentId = await this.lockdown.initiateLockdown(level, reason, interaction.user.tag);
       
       if (incidentId) {
-        // 2. Antwort editieren statt neu zu senden
         await interaction.editReply({ content: `🔒 Lockdown Level ${level} initiated! Incident ID: ${incidentId}` });
         await this.logger.logLockdown(level, reason, interaction.user.tag);
       } else {
@@ -273,10 +271,21 @@ class SecurityBot {
 
   startUnlockChecker() {
     setInterval(async () => {
-      if (this.lockdown) {
-        await this.lockdown.checkUnlockSignal();
+      // HIER: Nur prüfen, wenn NICHT bereits eine Wiederherstellung läuft
+      if (this.lockdown && !this.isRestoring) {
+        if (process.env.UNLOCK_SERVER === 'true') {
+          this.isRestoring = true; // Sperre aktivieren
+          try {
+            await this.lockdown.checkUnlockSignal();
+          } catch (err) {
+            console.error("Fehler beim Verarbeiten des Unlock-Signals:", err);
+          } finally {
+            // Hinweis: Die Sperre bleibt absichtlich auf true, bis das Skript komplett durchgelaufen ist 
+            // oder manuell neugestartet wird, damit kein doppelter Trigger entsteht.
+          }
+        }
       }
-    }, 5000); // Check every 5 seconds
+    }, 5000);
   }
 
   start() {
