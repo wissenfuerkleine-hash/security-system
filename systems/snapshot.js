@@ -10,16 +10,20 @@ class SnapshotManager {
     };
 
     guild.channels.cache.forEach(channel => {
+      // Sicherstellen, dass permissionOverwrites existiert und direkt gemappt werden kann
+      const overwrites = channel.permissionOverwrites ? channel.permissionOverwrites.cache || channel.permissionOverwrites : null;
+      
       snapshot.channels.push({
         id: channel.id,
         name: channel.name,
         type: channel.type,
         parentId: channel.parentId,
-        permissionOverwrites: channel.permissionOverwrites.cache.map(po => ({
+        permissionOverwrites: overwrites ? overwrites.map(po => ({
           id: po.id,
-          allow: po.allow.bitfield,
-          deny : po.deny.bitfield
-        }))
+          type: po.type, // Zeigt an, ob es für eine Rolle oder ein Mitglied ist
+          allow: po.allow.bitfield.toString(), // Als String speichern, um BigInt-Fehler zu vermeiden
+          deny : po.deny.bitfield.toString()
+        })) : []
       });
     });
 
@@ -30,22 +34,26 @@ class SnapshotManager {
           name: role.name,
           color: role.color,
           hoist: role.hoist,
-          permissions: role.permissions.bitfield,
+          permissions: role.permissions.bitfield.toString(), // Auch hier als String sichern
           position: role.position
         });
       }
     });
 
-    const invites = await guild.invites.fetch();
-    invites.forEach(invite => {
-      snapshot.invites.push({
-        code: invite.code,
-        channelId: invite.channelId,
-        inviterId: invite.inviterId,
-        maxUses: invite.maxUses,
-        temporary: invite.temporary
+    try {
+      const invites = await guild.invites.fetch();
+      invites.forEach(invite => {
+        snapshot.invites.push({
+          code: invite.code,
+          channelId: invite.channelId,
+          inviterId: invite.inviterId,
+          maxUses: invite.maxUses,
+          temporary: invite.temporary
+        });
       });
-    });
+    } catch (inviteError) {
+      console.warn('Could not fetch invites for snapshot:', inviteError.message);
+    }
 
     await pool.query(
       `INSERT INTO snapshots (incident_id, channels, roles, permissions, invites)
